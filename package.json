@@ -1,0 +1,23 @@
+{
+  "name": "pi-disk-usage",
+  "version": "0.1.0",
+  "description": "Clickable disk usage indicator and home directory top 20 for Pi",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "engines": { "node": ">=22.18.0" },
+  "files": ["src", "README.md", "LICENSE"],
+  "pi": { "extensions": ["./src/index.ts"] },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.5.2",
+    "@earendil-works/pi-tui": ">=1.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}
