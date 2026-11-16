@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { t } from "./i18n.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readDiskUsage, type DiskUsage } from "./disk.ts";
 import { createIndicator, DiskReport, type IndicatorState } from "./ui.ts";
@@ -37,7 +38,7 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
 
   const open = async (ctx: ExtensionContext) => {
     if (ctx.mode !== "tui") {
-      if (ctx.hasUI) ctx.ui.notify("/disk доступна только в интерактивном терминале pi", "warning");
+      if (ctx.hasUI) ctx.ui.notify(t("/disk доступна только в интерактивном терминале pi", "/disk is only available in Pi's interactive terminal"), "warning");
       return;
     }
     if (opening) return;
@@ -50,10 +51,10 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
       }, {
         overlay: true,
         overlayOptions: { width: "95%", maxHeight: "90%", anchor: "center" },
-        blocked: { kind: "question", message: "Использование диска" },
+        blocked: { kind: "question", message: t("Использование диска", "Disk usage") },
       });
     } catch (error) {
-      ctx.ui.notify(`Не удалось открыть отчёт: ${error instanceof Error ? error.message : String(error)}`, "error");
+      ctx.ui.notify(`${t("Не удалось открыть отчёт", "Could not open the report")}: ${error instanceof Error ? error.message : String(error)}`, "error");
     } finally {
       report?.dispose();
       report = undefined;
@@ -62,7 +63,7 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("disk", {
-    description: "Занятое место на диске, /tmp и топ-20 файлов/папок в домашнем каталоге",
+    description: t("Занятое место на диске, /tmp и общий топ-20 по доступным домашним каталогам", "Disk usage, /tmp and a shared top 20 across accessible home directories"),
     handler: async (_args, ctx) => open(ctx),
   });
 

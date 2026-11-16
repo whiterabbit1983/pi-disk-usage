@@ -4,8 +4,10 @@ import {
   type Component, type TUI, type TuiMouseEvent, type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { cleanupAdvice, supportsTmpfilesDryRun } from "./cleanup.ts";
+import { t } from "./i18n.ts";
+import { scanHomes } from "./homes.ts";
 import {
-  formatBytes, readDiskUsage, safeText, scanHome, scanTmp, usageLevel, usagePercent,
+  formatBytes, isInside, readDiskUsage, safeText, scanTmp, usageLevel, usagePercent,
   type DirectoryReport, type DiskUsage,
 } from "./disk.ts";
 
@@ -17,7 +19,7 @@ const COLORS = {
 };
 export interface IndicatorState { usage?: DiskUsage; error?: string; }
 export function coloredUsage(theme: Theme, usage: DiskUsage): string {
-  return theme.style(`Диск: занято ${usagePercent(usage.used, usage.total).toFixed(1)}% · ${formatBytes(usage.used)} / ${formatBytes(usage.total)}`, {
+  return theme.style(`${usage.scope === "container" ? t("Контейнер /: занято", "Container /: used") : t("Диск: занято", "Disk: used")} ${usagePercent(usage.used, usage.total).toFixed(1)}% · ${formatBytes(usage.used)} / ${formatBytes(usage.total)}`, {
     fg: COLORS[usageLevel(usage.used, usage.total)], bold: true,
   });
 }
@@ -28,10 +30,10 @@ export function createIndicator(theme: Theme, state: () => IndicatorState, open:
     render(width) {
       const current = state();
       const text = current.error
-        ? theme.fg("warning", "Диск: ошибка обновления")
-        : current.usage ? coloredUsage(theme, current.usage) : theme.fg("dim", "Диск: измерение…");
+        ? theme.fg("warning", t("Диск: ошибка обновления", "Disk: refresh failed"))
+        : current.usage ? coloredUsage(theme, current.usage) : theme.fg("dim", t("Диск: измерение…", "Disk: measuring…"));
       clickableWidth = Math.min(width, visibleWidth(text));
-      const hint = theme.fg("dim", "  [клик / /disk]");
+      const hint = theme.fg("dim", t("  [клик / /disk]", "  [click / /disk]"));
       return [truncateToWidth(text + hint, width)];
     },
     invalidate() {},
@@ -107,7 +109,7 @@ export class DiskReport implements Component {
       this.usage = usage;
       this.publish(usage);
     }, (error) => { this.diskError = error; });
-    void load(scanHome(this.homePath, controller.signal), (report) => { this.home = report; },
+    void load(scanHomes(this.homePath, controller.signal), (report) => { this.home = report; },
       (error) => { this.homeError = error; });
     void load(scanTmp(controller.signal), (report) => { this.tmp = report; },
       (error) => { this.tmpError = error; });
@@ -120,44 +122,51 @@ export class DiskReport implements Component {
     const add = (text: string) => lines.push(...wrapTextWithAnsi(text, Math.max(1, width)));
     if (this.usage) {
       add(coloredUsage(th, this.usage));
-      add(`Всего: ${formatBytes(this.usage.total)} · доступно: ${formatBytes(this.usage.available)}`);
+      add(`${t("Всего", "Total")}: ${formatBytes(this.usage.total)} · ${t("доступно", "available")}: ${formatBytes(this.usage.available)}`);
     }
-    if (this.diskError) add(th.fg("warning", `df: ${safeText(this.diskError)} (предыдущее значение, если есть)`));
-    if (!this.usage && !this.diskError) add("Получение статистики файловых систем…");
+    if (this.usage?.scope === "container") {
+      add(th.fg("warning", t("Контейнер: счётчик относится к файловой системе /. Для overlay это обычно хранилище хоста, не размер контейнера или его записываемого слоя. Лимит учитывается, только если он виден через statfs.", "Container: the indicator refers to the / filesystem. For overlay this is usually host storage, not the container size or its writable layer. A quota is reflected only if exposed by statfs.")));
+      add(th.fg("dim", t("Тома показаны отдельно и не прибавляются к /. Они могут использовать тот же диск хоста. Образы, слои и volumes других контейнеров изнутри не измеряются.", "Volumes are listed separately and are not added to /. They may share the same host disk. Images, layers and other containers' volumes cannot be measured from here.")));
+    }
+    if (this.diskError) add(th.fg("warning", `${t("Статистика диска", "Disk statistics")}: ${safeText(this.diskError)} (${t("предыдущее значение, если есть", "previous value, if available")})`));
+    if (!this.usage && !this.diskError) add(t("Получение статистики файловых систем…", "Loading filesystem statistics…"));
     lines.push("");
-    add(th.fg("accent", "/tmp — только общий размер"));
+    add(th.fg("accent", t("/tmp — только общий размер", "/tmp — total size only")));
     if (this.tmp) {
-      add(`/tmp: ${this.tmp.total === undefined ? "?" : formatBytes(this.tmp.total)} (уже входит в счётчик диска)`);
-    } else add(this.tmpError ? th.fg("warning", safeText(this.tmpError)) : "Подсчёт /tmp… содержимое не выводится.");
-    add(th.fg("dim", "Автоочистки нет. Нажмите c: команды и ограничения очистки /tmp и специализированных каталогов."));
+      add(`/tmp: ${this.tmp.total === undefined ? "?" : formatBytes(this.tmp.total)} (${this.usage?.scope === "container" ? t("может находиться на отдельном томе или tmpfs", "may reside on a separate volume or tmpfs") : t("уже входит в счётчик диска", "already included in disk usage")})`);
+    } else add(this.tmpError ? th.fg("warning", safeText(this.tmpError)) : t("Подсчёт /tmp… содержимое не выводится.", "Measuring /tmp… contents are not displayed."));
+    add(th.fg("dim", t("Автоочистки нет. Нажмите c: команды и ограничения очистки /tmp и специализированных каталогов.", "No automatic cleanup. Press c for cleanup commands and caveats for /tmp and recognized directories.")));
     lines.push("");
-    add(th.fg("accent", `Топ-20 файлов и папок: ${safeText(this.home?.root ?? this.homePath)}`));
+    add(th.fg("accent", t("Топ-20 файлов и папок: текущий домашний каталог и доступные каталоги в /home", "Top 20 files and directories: current home and accessible homes under /home")));
     if (this.home) {
-      add(`Всего в домашнем каталоге: ${this.home.total === undefined ? "?" : formatBytes(this.home.total)}`);
-      if (!this.home.entries.length) add("Нет доступных файлов и папок.");
+      add(`${t("Всего в доступных домашних каталогах", "Accessible home directories total")}: ${this.home.total === undefined ? "?" : formatBytes(this.home.total)}`);
+      if (!this.home.entries.length) add(t("Нет доступных файлов и папок.", "No accessible files or directories."));
       for (const [index, entry] of this.home.entries.entries()) {
-        const path = `~/${entry.path.slice(this.home.root.length).replace(/^\//, "")}`;
+        const path = isInside(this.home.root, entry.path)
+          ? `~/${entry.path.slice(this.home.root.length).replace(/^\//, "")}` : entry.path;
         const kind = entry.kind === "directory" ? "DIR " : entry.kind === "symlink" ? "LINK" : entry.kind === "file" ? "FILE" : " ?  ";
         add(`${String(index + 1).padStart(2)}. ${formatBytes(entry.bytes).padStart(10)}  ${kind}  ${safeText(path)}`);
       }
-    } else add(this.homeError ? th.fg("warning", safeText(this.homeError)) : "Сканирование домашнего каталога… Esc отменит сканирование.");
-    add(th.fg("dim", "Включая скрытые каталоги и вложенные пути. Символические ссылки не раскрываются."));
-    add(th.fg("dim", "Размер папки включает её содержимое: строки рейтинга нельзя складывать."));
+    } else add(this.homeError ? th.fg("warning", safeText(this.homeError)) : t("Сканирование домашних каталогов… Esc отменит сканирование.", "Scanning home directories… Esc cancels the scan."));
+    add(th.fg("dim", t("Каталоги без прав доступа пропускаются без ошибок. ~ — ваш домашний каталог; для остальных показан полный путь.", "Homes without access permissions are silently skipped. ~ means your home; other paths are shown in full.")));
+    add(th.fg("dim", t("Включая скрытые каталоги и вложенные пути. Символические ссылки не раскрываются.", "Includes hidden directories and nested paths. Symbolic links are not followed.")));
+    add(th.fg("dim", t("Размер папки включает её содержимое: строки рейтинга нельзя складывать.", "Directory sizes include their contents: do not add the ranking rows together.")));
     lines.push("");
-    add(th.fg("accent", "Файловые системы (не только домашний каталог)"));
+    add(th.fg("accent", this.usage?.scope === "container" ? t("Файловая система / и отдельные тома (не суммируются)", "/ filesystem and separate volumes (not summed)") : t("Файловые системы (не только домашний каталог)", "Filesystems (not just the home directory)")));
     for (const fs of this.usage?.filesystems ?? []) {
       add(`${usagePercent(fs.used, fs.total).toFixed(1)}%  ${formatBytes(fs.used)} / ${formatBytes(fs.total)}  ${safeText(fs.mount)} [${safeText(fs.type)}]`);
     }
-    add(th.fg("dim", "GB = 1 000 000 000 байт. du: занятые блоки; df: вся файловая система."));
+    add(th.fg("dim", t("GB = 1 000 000 000 байт. du: занятые блоки; df: вся файловая система.", "GB = 1,000,000,000 bytes. du: allocated blocks; df: the entire filesystem.")));
     lines.push("");
     this.adviceStart = lines.length;
-    add(th.fg("accent", "Рекомендации по очистке — только ручное выполнение"));
-    add(th.fg("warning", "Универсально безопасного удаления нет. Сначала проверка, затем осознанная очистка."));
-    for (const advice of cleanupAdvice(this.home?.root ?? this.homePath, this.home?.entries ?? [], this.tmpfilesDryRun)) {
+    add(th.fg("accent", t("Рекомендации по очистке — только ручное выполнение", "Cleanup recommendations — manual execution only")));
+    add(th.fg("warning", t("Универсально безопасного удаления нет. Сначала проверка, затем осознанная очистка.", "No deletion is universally safe. Inspect first, then clean up deliberately.")));
+    add(th.fg("dim", t("Рекомендации для пользовательских кэшей относятся только к вашему домашнему каталогу. Чужие данные не очищайте.", "User-cache recommendations apply only to your own home. Do not clean up other users' data.")));
+    for (const advice of cleanupAdvice(this.home?.root ?? this.homePath, this.home?.entries ?? [], this.tmpfilesDryRun, this.usage?.scope === "container")) {
       lines.push("");
       add(th.fg("accent", advice.title));
-      for (const command of advice.inspect) add(`Проверка: ${command}`);
-      for (const command of advice.clean) add(`После проверки: ${command}`);
+      for (const command of advice.inspect) add(`${t("Проверка", "Inspect")}: ${command}`);
+      for (const command of advice.clean) add(`${t("После проверки", "After inspection")}: ${command}`);
       add(advice.caution);
     }
     return lines;
@@ -178,8 +187,8 @@ export class DiskReport implements Component {
       const clipped = truncateToWidth(text, innerWidth);
       return border("│ ") + clipped + " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped))) + border(" │");
     };
-    const top = truncateToWidth(" Диск · обзор ", width - 5);
-    const bottom = truncateToWidth(` ↑↓ PgUp/PgDn · c очистка · r обновить · Esc закрыть · ${this.offset + 1}/${body.length} `, width - 2);
+    const top = truncateToWidth(t(" Диск · обзор ", " Disk · overview "), width - 5);
+    const bottom = truncateToWidth(` ↑↓ PgUp/PgDn · ${t("c очистка · r обновить · Esc закрыть", "c cleanup · r refresh · Esc close")} · ${this.offset + 1}/${body.length} `, width - 2);
     return [
       border(`╭${top}${"─".repeat(Math.max(0, width - visibleWidth(top) - 5))}[×]╮`),
       ...page.map(row),

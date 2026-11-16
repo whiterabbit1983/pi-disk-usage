@@ -4,6 +4,7 @@ import type { Theme, KeybindingsManager as AgentKeys } from "@earendil-works/pi-
 import { KeybindingsManager, TUI_KEYBINDINGS, styleText, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { cleanupAdvice, supportsTmpfilesDryRun } from "../src/cleanup.ts";
 import { GB, type DiskUsage } from "../src/disk.ts";
+import { detectLanguage } from "../src/i18n.ts";
 import { createIndicator, DiskReport, type IndicatorState } from "../src/ui.ts";
 
 const theme = {
@@ -41,7 +42,7 @@ test("indicator supports clicks only on its label and uses exact requested color
   assert.match(indicator.render(100)[0], /\x1b\[38;2;34;197;94m/);
   assert.match(indicator.render(100)[0], /70\.0%/);
   state = { error: "df failed" };
-  assert.match(indicator.render(100)[0], /ошибка/);
+  assert.match(indicator.render(100)[0], detectLanguage() === "ru" ? /ошибка/ : /refresh failed/);
   for (const width of [0, 1, 4, 20, 40]) assert.ok(visibleWidth(indicator.render(width)[0]) <= width);
 });
 
@@ -63,7 +64,7 @@ test("report fits narrow/wide/short terminals, supports scrolling, cleanup jump,
   terminal.rows = 24;
   report.render(100);
   report.handleInput("c");
-  assert.match(report.render(100).join("\n"), /Рекомендации по очистке/);
+  assert.match(report.render(100).join("\n"), detectLanguage() === "ru" ? /Рекомендации по очистке/ : /Cleanup recommendations/);
   assert.match(report.render(100).join("\n"), /systemd-tmpfiles/);
   const before = report.render(100).join("\n");
   report.handleMouse(mouse({ type: "wheel", wheelDelta: 3 }));

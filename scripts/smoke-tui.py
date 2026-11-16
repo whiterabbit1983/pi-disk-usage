@@ -14,10 +14,12 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(mode):
+def run(mode, locale):
+    russian = locale.startswith("ru")
+    label = f"{mode} {locale}"
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    env = {**os.environ, "TERM": "xterm-256color", "PI_OFFLINE": "1"}
+    env = {**os.environ, "TERM": "xterm-256color", "PI_OFFLINE": "1", "LC_ALL": locale}
     command = ["pi", "-ne", "-e", str(ROOT / "src/index.ts"), "--offline",
                "--no-session", "--no-context-files", "--no-themes", "--use-theme", "dark",
                "--no-skills", "--no-mcp", "--no-approve", "--tui-mode", mode]
@@ -40,27 +42,27 @@ def run(mode):
                 output.extend(data)
 
     def require(text):
-        assert text in output.decode("utf-8", errors="replace"), f"{mode}: missing {text!r}"
+        assert text in output.decode("utf-8", errors="replace"), f"{label}: missing {text!r}"
 
     try:
         pump(4)
-        require("Диск: занято")
+        require("Диск: занято" if russian else "Disk: used")
         assert proc.poll() is None, f"Pi exited early: {proc.returncode}"
         os.write(master, b"/disk\r")
         pump(2)
-        require("Диск · обзор")
-        require("Топ-20")
+        require("Диск · обзор" if russian else "Disk · overview")
+        require("Топ-20" if russian else "Top 20")
         os.write(master, b"c")
         pump(0.5)
-        require("Рекомендации по очистке")
+        require("Рекомендации по очистке" if russian else "Cleanup recommendations")
         require("systemd-tmpfiles")
         os.write(master, b"\x1b")
         pump(0.5)
         assert proc.poll() is None
-        print(f"PASS {mode}: indicator, /disk, report, cleanup advice, Esc")
+        print(f"PASS {label}: indicator, /disk, report, cleanup advice, Esc")
     except Exception:
         # Strip neither private session data nor credentials into a log; print only a short error marker.
-        print(f"FAIL {mode}: {len(output)} terminal bytes captured (not printed)")
+        print(f"FAIL {label}: {len(output)} terminal bytes captured (not printed)")
         raise
     finally:
         if proc.poll() is None:
@@ -74,5 +76,6 @@ def run(mode):
 
 
 if __name__ == "__main__":
-    run("fullscreen")
-    run("regular")
+    for locale in ("ru_RU.UTF-8", "en_US.UTF-8"):
+        for mode in ("fullscreen", "regular"):
+            run(mode, locale)

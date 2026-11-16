@@ -3,6 +3,8 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { StringDecoder } from "node:string_decoder";
+import { t } from "./i18n.ts";
+import { isContainer, readContainerUsage } from "./container.ts";
 
 const execFileAsync = promisify(execFile);
 export const GB = 1_000_000_000;
@@ -17,6 +19,8 @@ export interface FilesystemUsage {
   available: number;
 }
 export interface DiskUsage {
+  /** Container totals refer only to /; additional volumes are not added. */
+  scope?: "container";
   filesystems: FilesystemUsage[];
   used: number;
   total: number;
@@ -29,6 +33,8 @@ export interface UsageEntry {
 }
 export interface DirectoryReport {
   root: string;
+  /** Disjoint accessible roots included in a combined home-directory report. */
+  roots?: string[];
   total?: number;
   entries: UsageEntry[];
   /** Internal metadata only: expected traversal warnings are not shown in the UI. */
@@ -84,7 +90,7 @@ export function parseDf(output: string): DiskUsage {
     seen.add(key);
     filesystems.push({ source, type, mount, total: Number(size), used: Number(used), available: Number(available) });
   }
-  if (!filesystems.length) throw new Error("df не вернул доступных файловых систем");
+  if (!filesystems.length) throw new Error(t("df не вернул доступных файловых систем", "df returned no available filesystems"));
   return {
     filesystems,
     used: filesystems.reduce((sum, fs) => sum + fs.used, 0),
@@ -94,6 +100,8 @@ export function parseDf(output: string): DiskUsage {
 }
 
 export async function readDiskUsage(signal?: AbortSignal): Promise<DiskUsage> {
+  signal?.throwIfAborted();
+  if (await isContainer()) return readContainerUsage(signal);
   const { stdout } = await execFileAsync("df", [
     "--local", "--block-size=1", "--output=source,fstype,size,used,avail,target",
   ], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, timeout: 5_000, maxBuffer: 2 * 1024 * 1024, signal });
@@ -127,7 +135,7 @@ export class DuCollector {
       start = end + 1;
     }
     this.pending = this.pending.slice(start);
-    if (this.pending.length > 1024 * 1024) throw new Error("Слишком длинная запись du");
+    if (this.pending.length > 1024 * 1024) throw new Error(t("Слишком длинная запись du", "du record is too long"));
   }
 
   private accept(record: string): void {
@@ -182,10 +190,13 @@ async function runDu(root: string, summary: boolean, signal: AbortSignal, timeou
     });
     if (streamError) throw streamError;
     signal.throwIfAborted();
-    if (controller.signal.aborted) throw new Error(`Сканирование заняло более ${timeoutMs / 1000} с`);
+    if (controller.signal.aborted) throw new Error(t(`Сканирование заняло более ${timeoutMs / 1000} с`, `Scan exceeded ${timeoutMs / 1000} seconds`));
     collector.push(decoder.end());
     if (code !== 0 && collector.total === undefined && !collector.entries.length) {
-      throw new Error(stderr.trim() || `du завершился с кодом ${code}`);
+      if (/(?:unrecognized|invalid|unknown|illegal) option/i.test(stderr)) {
+        throw new Error(t("Для сканирования нужен GNU du (coreutils). Debian/Ubuntu: apt-get install coreutils; Alpine: apk add coreutils.", "Scanning requires GNU du (coreutils). Debian/Ubuntu: apt-get install coreutils; Alpine: apk add coreutils."));
+      }
+      throw new Error(stderr.trim() || t(`du завершился с кодом ${code}`, `du exited with code ${code}`));
     }
     const entries = await Promise.all(collector.entries.map(async (entry): Promise<UsageEntry> => {
       try {
@@ -208,7 +219,7 @@ async function runDu(root: string, summary: boolean, signal: AbortSignal, timeou
 
 export async function scanHome(home: string, signal: AbortSignal, timeoutMs = 120_000): Promise<DirectoryReport> {
   const root = await realpath(home);
-  if (root === "/tmp" || isInside("/tmp", root)) throw new Error("Содержимое /tmp не показывается");
+  if (root === "/tmp" || isInside("/tmp", root)) throw new Error(t("Содержимое /tmp не показывается", "The contents of /tmp are not displayed"));
   return runDu(root, false, signal, timeoutMs);
 }
 

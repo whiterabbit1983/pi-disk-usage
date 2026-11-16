@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { detectLanguage } from "../src/i18n.ts";
 import {
   DuCollector, GB, formatBytes, isInside, parseDf, readDiskUsage, safeText,
   scanHome, scanTmp, usageLevel, usagePercent,
@@ -105,17 +106,20 @@ test("real du scans hidden/nested files, measures allocated blocks, does not fol
 });
 
 test("/tmp cannot be used as a home report, including through a symlink", async () => {
-  await assert.rejects(scanHome("/tmp", new AbortController().signal), /не показывается/);
+  const message = detectLanguage() === "ru" ? /не показывается/ : /not displayed/;
+  await assert.rejects(scanHome("/tmp", new AbortController().signal), message);
   const link = join(fixture, "tmp-alias");
   await symlink("/tmp", link);
-  await assert.rejects(scanHome(link, new AbortController().signal), /не показывается/);
+  await assert.rejects(scanHome(link, new AbortController().signal), message);
 });
 
 test("real df returns system-wide disk usage", async () => {
   const usage = await readDiskUsage();
   assert.ok(usage.used > 0);
   assert.ok(usage.filesystems.some((fs) => fs.mount === "/"));
-  assert.equal(usage.used, usage.filesystems.reduce((sum, fs) => sum + fs.used, 0));
+  assert.equal(usage.used, usage.scope === "container"
+    ? usage.filesystems.find((fs) => fs.mount === "/")!.used
+    : usage.filesystems.reduce((sum, fs) => sum + fs.used, 0));
 });
 
 test("cancelled scans terminate without waiting for du", async () => {
@@ -151,7 +155,7 @@ test("du partial errors, summary arguments, timeout and in-flight cancellation",
     assert.ok(!JSON.stringify(tmp).includes("Permission denied"));
 
     await fakeDu(`setInterval(() => {}, 1000);`);
-    await assert.rejects(scanHome(fixture, new AbortController().signal, 100), /Сканирование заняло/);
+    await assert.rejects(scanHome(fixture, new AbortController().signal, 100), detectLanguage() === "ru" ? /Сканирование заняло/ : /Scan exceeded/);
     const controller = new AbortController();
     const operation = scanHome(fixture, controller.signal);
     setTimeout(() => controller.abort(), 100);
