@@ -33,8 +33,6 @@ export interface UsageEntry {
 }
 export interface DirectoryReport {
   root: string;
-  /** Disjoint accessible roots included in a combined home-directory report. */
-  roots?: string[];
   total?: number;
   entries: UsageEntry[];
   /** Internal metadata only: expected traversal warnings are not shown in the UI. */

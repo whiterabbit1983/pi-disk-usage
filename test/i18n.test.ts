@@ -73,15 +73,19 @@ for (const locale of ["ru_RU.UTF-8", "en_US.UTF-8", "C", "fr_FR.UTF-8"]) {
     const containerUsage: DiskUsage = { ...usage, scope: "container" };
     const containerReport = new DiskReport(tui, theme, keys, () => {}, "/home/test", containerUsage, () => {});
     Object.assign(containerReport, {
-      home: { root: "/home/test", roots: ["/home/test", "/home/other"], total: 30, incomplete: false,
-        entries: [{ path: "/home/test/own-file", bytes: 10 }, { path: "/home/other/other-file", bytes: 20 }] },
+      home: { root: "/home/test", total: 30, incomplete: false, directories: [
+        { root: "/home/test", total: 10, incomplete: false, entries: [{ path: "/home/test/own-file", bytes: 10 }] },
+        { root: "/home/other", total: 20, incomplete: false, entries: [{ path: "/home/other/other-file", bytes: 20 }] },
+      ] },
       tmp: { root: "/tmp", total: 10, entries: [], incomplete: false },
     });
     const containerPage = containerReport.render(160).join("\n");
     assert.match(containerPage, russian ? /Контейнер \/: занято/ : /Container \/: used/);
     assert.match(containerPage, /~\/own-file/);
     assert.match(containerPage, /\/home\/other\/other-file/);
-    assert.match(containerPage, russian ? /не суммируются/ : /not summed/);
+    assert.match(containerPage, russian ? /Топ-20: \/home\/test \(~\)/ : /Top 20: \/home\/test \(~\)/);
+    assert.match(containerPage, russian ? /Топ-20: \/home\/other/ : /Top 20: \/home\/other/);
+    assert.equal((containerPage.match(/\b1\.\s+/g) ?? []).length, 2, "each directory restarts numbering at 1");
     assert.doesNotMatch(containerPage, /~\/other-file/);
     containerReport.handleInput("c");
     const containerCleanup = containerReport.render(160).join("\n");

@@ -12,7 +12,7 @@ assert.equal(await isContainer(), true);
 assert.equal(process.getuid?.(), 0, "Start as container root to prepare permission fixtures");
 for (const home of ["alice", "bob", "locked"]) {
   await mkdir(`/home/${home}`, { recursive: true, mode: 0o755 });
-  for (let i = 1; i <= 15; i++) {
+  for (let i = 1; i <= 25; i++) {
     await writeFile(`/home/${home}/${home}-${i}`, Buffer.alloc(i * 4096, 1));
   }
 }
@@ -30,13 +30,15 @@ assert.ok(!usage.filesystems.some(({ mount }) => ["/etc/hosts", "/etc/hostname",
 const devices = await Promise.all(usage.filesystems.map(async ({ mount }) => (await stat(mount)).dev));
 assert.equal(new Set(devices).size, devices.length);
 const homes = await scanHomes("/home/alice", new AbortController().signal);
-assert.deepEqual(homes.roots?.slice().sort(), ["/home/alice", "/home/bob"]);
-assert.equal(homes.entries.length, 20);
-assert.ok(homes.entries.some(({ path }) => path.startsWith("/home/alice/")));
-assert.ok(homes.entries.some(({ path }) => path.startsWith("/home/bob/")));
-assert.ok(!homes.entries.some(({ path }) => path.includes("locked")));
+assert.deepEqual(homes.directories.map(({ root }) => root).sort(), ["/home/alice", "/home/bob"]);
+for (const directory of homes.directories) {
+  assert.equal(directory.entries.length, 20);
+  assert.ok(directory.entries.every(({ path }) => path.startsWith(`${directory.root}/`)));
+}
+assert.equal(homes.directories.flatMap(({ entries }) => entries).length, 40);
+assert.ok(!homes.directories.some(({ root }) => root.includes("locked")));
 assert.equal(homes.incomplete, false);
-const advice = cleanupAdvice(homes.root, homes.entries, false, true);
+const advice = cleanupAdvice(homes.root, homes.directories.find(({ root }) => root === homes.root)!.entries, false, true);
 assert.equal(advice[0].id, "container");
 assert.ok(!advice.flatMap(({ inspect, clean }) => [...inspect, ...clean]).some((command) => /sudo|systemd/.test(command)));
-console.log(`PASS Docker (${detectLanguage()}): overlay/statfs, tmpfs volumes, bind deduplication, unprivileged shared top-20, inaccessible home skipped`);
+console.log(`PASS Docker (${detectLanguage()}): overlay/statfs, tmpfs volumes, bind deduplication, unprivileged top-20 per home, inaccessible home skipped`);

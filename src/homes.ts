@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { isInside, scanHome, TOP_COUNT, type DirectoryReport, type UsageEntry } from "./disk.ts";
+import { isInside, scanHome, type DirectoryReport } from "./disk.ts";
 import { t } from "./i18n.ts";
 
 /** Discover readable/searchable homes; directory symlinks under /home are not followed. */
@@ -25,13 +25,20 @@ export async function accessibleHomes(home: string, signal: AbortSignal, homesDi
     .filter((root, _index, all) => !all.some((parent) => isInside(parent, root)));
 }
 
-/** One shared top-20, bounded memory and an overall deadline, not 20 entries per user. */
+export interface HomesReport {
+  /** Canonical home of the current user, used for ~ paths and own-cache advice. */
+  root: string;
+  directories: DirectoryReport[];
+  total?: number;
+  incomplete: boolean;
+}
+
+/** Keep a separate bounded top-20 per accessible home, with one overall deadline. */
 export async function scanHomes(home: string, signal: AbortSignal, timeoutMs = 120_000,
-  homesDirectory = "/home"): Promise<DirectoryReport> {
+  homesDirectory = "/home"): Promise<HomesReport> {
   const started = Date.now();
   const roots = await accessibleHomes(home, signal, homesDirectory);
-  const entries: UsageEntry[] = [];
-  const scanned: string[] = [];
+  const directories: DirectoryReport[] = [];
   let total = 0;
   let hasTotal = false;
   let incomplete = false;
@@ -41,12 +48,9 @@ export async function scanHomes(home: string, signal: AbortSignal, timeoutMs = 1
     if (remaining <= 0) throw new Error(t("Истекло время сканирования домашних каталогов", "Home-directory scan timed out"));
     try {
       const report = await scanHome(root, signal, remaining);
-      scanned.push(root);
+      directories.push(report);
       if (report.total !== undefined) { total += report.total; hasTotal = true; }
       incomplete ||= report.incomplete;
-      entries.push(...report.entries);
-      entries.sort((a, b) => b.bytes - a.bytes || a.path.localeCompare(b.path));
-      entries.splice(TOP_COUNT);
     } catch (error) {
       signal.throwIfAborted();
       const code = (error as NodeJS.ErrnoException)?.code;
@@ -63,5 +67,5 @@ export async function scanHomes(home: string, signal: AbortSignal, timeoutMs = 1
   signal.throwIfAborted();
   const currentHome = await realpath(home).catch(() => home);
   signal.throwIfAborted();
-  return { root: currentHome, roots: scanned, total: hasTotal ? total : undefined, entries, incomplete };
+  return { root: currentHome, directories, total: hasTotal ? total : undefined, incomplete };
 }

@@ -63,7 +63,7 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("disk", {
-    description: t("Занятое место на диске, /tmp и общий топ-20 по доступным домашним каталогам", "Disk usage, /tmp and a shared top 20 across accessible home directories"),
+    description: t("Занятое место на диске, /tmp и отдельный топ-20 для каждого доступного домашнего каталога", "Disk usage, /tmp and a separate top 20 for each accessible home directory"),
     handler: async (_args, ctx) => open(ctx),
   });
 

@@ -5,7 +5,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { cleanupAdvice, supportsTmpfilesDryRun } from "./cleanup.ts";
 import { t } from "./i18n.ts";
-import { scanHomes } from "./homes.ts";
+import { scanHomes, type HomesReport } from "./homes.ts";
 import {
   formatBytes, isInside, readDiskUsage, safeText, scanTmp, usageLevel, usagePercent,
   type DirectoryReport, type DiskUsage,
@@ -61,7 +61,7 @@ export class DiskReport implements Component {
   private publish: (usage: DiskUsage) => void;
   private usage?: DiskUsage;
   private diskError?: string;
-  private home?: DirectoryReport;
+  private home?: HomesReport;
   private tmp?: DirectoryReport;
   private homeError?: string;
   private tmpError?: string;
@@ -137,15 +137,21 @@ export class DiskReport implements Component {
     } else add(this.tmpError ? th.fg("warning", safeText(this.tmpError)) : t("Подсчёт /tmp… содержимое не выводится.", "Measuring /tmp… contents are not displayed."));
     add(th.fg("dim", t("Автоочистки нет. Нажмите c: команды и ограничения очистки /tmp и специализированных каталогов.", "No automatic cleanup. Press c for cleanup commands and caveats for /tmp and recognized directories.")));
     lines.push("");
-    add(th.fg("accent", t("Топ-20 файлов и папок: текущий домашний каталог и доступные каталоги в /home", "Top 20 files and directories: current home and accessible homes under /home")));
+    add(th.fg("accent", t("Топ-20 файлов и папок отдельно по домашним каталогам", "Top 20 files and directories per home directory")));
     if (this.home) {
       add(`${t("Всего в доступных домашних каталогах", "Accessible home directories total")}: ${this.home.total === undefined ? "?" : formatBytes(this.home.total)}`);
-      if (!this.home.entries.length) add(t("Нет доступных файлов и папок.", "No accessible files or directories."));
-      for (const [index, entry] of this.home.entries.entries()) {
-        const path = isInside(this.home.root, entry.path)
-          ? `~/${entry.path.slice(this.home.root.length).replace(/^\//, "")}` : entry.path;
-        const kind = entry.kind === "directory" ? "DIR " : entry.kind === "symlink" ? "LINK" : entry.kind === "file" ? "FILE" : " ?  ";
-        add(`${String(index + 1).padStart(2)}. ${formatBytes(entry.bytes).padStart(10)}  ${kind}  ${safeText(path)}`);
+      if (!this.home.directories.length) add(t("Нет доступных файлов и папок.", "No accessible files or directories."));
+      for (const directory of this.home.directories) {
+        lines.push("");
+        add(th.fg("accent", `${t("Топ-20", "Top 20")}: ${safeText(directory.root)}${directory.root === this.home.root ? " (~)" : ""}`));
+        add(`${t("Размер каталога", "Directory size")}: ${directory.total === undefined ? "?" : formatBytes(directory.total)}`);
+        if (!directory.entries.length) add(t("Нет доступных файлов и папок.", "No accessible files or directories."));
+        for (const [index, entry] of directory.entries.entries()) {
+          const path = isInside(this.home.root, entry.path)
+            ? `~/${entry.path.slice(this.home.root.length).replace(/^\//, "")}` : entry.path;
+          const kind = entry.kind === "directory" ? "DIR " : entry.kind === "symlink" ? "LINK" : entry.kind === "file" ? "FILE" : " ?  ";
+          add(`${String(index + 1).padStart(2)}. ${formatBytes(entry.bytes).padStart(10)}  ${kind}  ${safeText(path)}`);
+        }
       }
     } else add(this.homeError ? th.fg("warning", safeText(this.homeError)) : t("Сканирование домашних каталогов… Esc отменит сканирование.", "Scanning home directories… Esc cancels the scan."));
     add(th.fg("dim", t("Каталоги без прав доступа пропускаются без ошибок. ~ — ваш домашний каталог; для остальных показан полный путь.", "Homes without access permissions are silently skipped. ~ means your home; other paths are shown in full.")));
@@ -162,7 +168,8 @@ export class DiskReport implements Component {
     add(th.fg("accent", t("Рекомендации по очистке — только ручное выполнение", "Cleanup recommendations — manual execution only")));
     add(th.fg("warning", t("Универсально безопасного удаления нет. Сначала проверка, затем осознанная очистка.", "No deletion is universally safe. Inspect first, then clean up deliberately.")));
     add(th.fg("dim", t("Рекомендации для пользовательских кэшей относятся только к вашему домашнему каталогу. Чужие данные не очищайте.", "User-cache recommendations apply only to your own home. Do not clean up other users' data.")));
-    for (const advice of cleanupAdvice(this.home?.root ?? this.homePath, this.home?.entries ?? [], this.tmpfilesDryRun, this.usage?.scope === "container")) {
+    const ownEntries = this.home?.directories.find((directory) => directory.root === this.home?.root)?.entries ?? [];
+    for (const advice of cleanupAdvice(this.home?.root ?? this.homePath, ownEntries, this.tmpfilesDryRun, this.usage?.scope === "container")) {
       lines.push("");
       add(th.fg("accent", advice.title));
       for (const command of advice.inspect) add(`${t("Проверка", "Inspect")}: ${command}`);

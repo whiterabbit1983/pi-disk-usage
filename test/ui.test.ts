@@ -5,6 +5,7 @@ import { KeybindingsManager, TUI_KEYBINDINGS, styleText, visibleWidth, type TUI,
 import { cleanupAdvice, supportsTmpfilesDryRun } from "../src/cleanup.ts";
 import { GB, type DiskUsage } from "../src/disk.ts";
 import { detectLanguage } from "../src/i18n.ts";
+import type { HomesReport } from "../src/homes.ts";
 import { createIndicator, DiskReport, type IndicatorState } from "../src/ui.ts";
 
 const theme = {
@@ -74,6 +75,39 @@ test("report fits narrow/wide/short terminals, supports scrolling, cleanup jump,
   assert.equal(closed, 1);
   report.close();
   assert.equal(closed, 1);
+});
+
+test("per-home rankings remain scrollable beyond 20 rows and cache advice uses only the current home", () => {
+  const tui = { terminal: { rows: 24 }, requestRender() {} } as unknown as TUI;
+  const keys = new KeybindingsManager(TUI_KEYBINDINGS) as AgentKeys;
+  const report = new DiskReport(tui, theme, keys, () => {}, "/home/alice", usage, () => {});
+  const home: HomesReport = {
+    root: "/home/alice", total: 420, incomplete: false,
+    directories: ["/home/alice", "/home/bob"].map((root, index) => ({
+      root, total: 210, incomplete: false,
+      entries: Array.from({ length: 20 }, (_entry, i) => ({
+        path: `${root}/${i === 19 ? (index === 0 ? ".npm" : ".cache/pip") : `file-${i + 1}`}`,
+        bytes: 20 - i,
+      })),
+    })),
+  };
+  home.directories.push({ root: "/home/empty", total: 0, entries: [], incomplete: false });
+  Object.assign(report, { home });
+  const pages: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    const lines = report.render(120);
+    assert.ok(lines.every((line) => visibleWidth(line) <= 120));
+    pages.push(lines.join("\n"));
+    report.handleMouse(mouse({ type: "wheel", wheelDelta: 10 }));
+  }
+  const rendered = pages.join("\n");
+  assert.match(rendered, /20\.\s+1 B\s+\?\s+~\/\.npm/);
+  assert.match(rendered, /20\.\s+1 B\s+\?\s+\/home\/bob\/\.cache\/pip/);
+  assert.match(rendered, /\/home\/empty/);
+  assert.match(rendered, detectLanguage() === "ru" ? /Нет доступных файлов и папок/ : /No accessible files or directories/);
+  assert.match(rendered, /npm cache verify/);
+  assert.doesNotMatch(rendered, /python3 -m pip cache purge/);
+  report.dispose();
 });
 
 test("known caches use native tools, unknown directories get no deletion command", () => {
