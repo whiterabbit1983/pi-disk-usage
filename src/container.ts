@@ -1,5 +1,5 @@
-import { access, readFile, stat, statfs } from "node:fs/promises";
-import type { DiskUsage, FilesystemUsage } from "./disk.ts";
+import { access, readFile } from "node:fs/promises";
+import { GB, scanContainerRoot, type DiskUsage, type UsageLevel } from "./disk.ts";
 import { t } from "./i18n.ts";
 
 export interface MountInfo {
@@ -62,33 +62,39 @@ export function filesystemBytes(stats: { bsize: number; blocks: number; bfree: n
   };
 }
 
-/** In a container, only / contributes to the indicator; volumes are shown separately. */
+export const DEFAULT_CONTAINER_THRESHOLDS = [50, 60, 70] as const;
+
+/** Decimal GB; invalid settings fail explicitly instead of silently changing colors. */
+export function containerThresholds(env: NodeJS.ProcessEnv = process.env): readonly [number, number, number] {
+  const raw = env.PI_DISK_USAGE_CONTAINER_THRESHOLDS_GB;
+  if (raw === undefined) return DEFAULT_CONTAINER_THRESHOLDS;
+  const parts = raw.split(",").map((part) => part.trim());
+  const values = parts.map(Number);
+  if (parts.length !== 3 || parts.some((part) => !part) ||
+      values.some((value) => !Number.isFinite(value) || value < 0) ||
+      !(values[0] < values[1] && values[1] < values[2])) {
+    throw new Error(t(
+      "PI_DISK_USAGE_CONTAINER_THRESHOLDS_GB: нужны три возрастающих неотрицательных числа, например 50,60,70",
+      "PI_DISK_USAGE_CONTAINER_THRESHOLDS_GB: expected three increasing nonnegative numbers, e.g. 50,60,70"));
+  }
+  return values as [number, number, number];
+}
+
+export function containerUsageLevel(used: number, thresholds = DEFAULT_CONTAINER_THRESHOLDS as readonly [number, number, number]): UsageLevel {
+  if (used >= thresholds[2] * GB) return "red";
+  if (used >= thresholds[1] * GB) return "orange";
+  if (used >= thresholds[0] * GB) return "yellow";
+  return "green";
+}
+
+/** Visible allocated blocks, including mounts; never host backing-store capacity. */
 export async function readContainerUsage(signal?: AbortSignal): Promise<DiskUsage> {
   signal?.throwIfAborted();
-  const mountinfo = await readFile("/proc/self/mountinfo", "utf8").catch(() => "");
-  const mounts = containerMounts(parseMountInfo(mountinfo));
-  if (!mounts.some(({ mount }) => mount === "/")) {
-    mounts.unshift({ device: "", source: "/", type: "unknown", mount: "/" });
-  }
-  const filesystems: FilesystemUsage[] = [];
-  const seen = new Set<number>();
-  for (const mount of mounts) {
-    signal?.throwIfAborted();
-    try {
-      const metadata = await stat(mount.mount);
-      // Exclude Docker's /etc/hosts, /etc/hostname, /etc/resolv.conf and other file binds.
-      if (!metadata.isDirectory() || seen.has(metadata.dev)) continue;
-      const stats = await statfs(mount.mount);
-      signal?.throwIfAborted();
-      filesystems.push({ source: mount.source, type: mount.type, mount: mount.mount, ...filesystemBytes(stats) });
-      seen.add(metadata.dev);
-    } catch (error) {
-      signal?.throwIfAborted();
-      // An inaccessible/disappearing volume must not hide the root filesystem.
-      if (mount.mount === "/") throw error;
-    }
-  }
-  const root = filesystems.find(({ mount }) => mount === "/");
-  if (!root) throw new Error(t("Корневая файловая система контейнера недоступна", "Container root filesystem is unavailable"));
-  return { filesystems, used: root.used, total: root.total, available: root.available, scope: "container" };
+  const thresholds = containerThresholds();
+  const report = await scanContainerRoot(signal ?? new AbortController().signal);
+  if (report.total === undefined) throw new Error(t("du не вернул размер /", "du returned no size for /"));
+  return {
+    scope: "container", used: report.total, incomplete: report.incomplete,
+    containerThresholds: thresholds, total: 0, available: 0, filesystems: [],
+  };
 }

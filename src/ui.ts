@@ -3,11 +3,13 @@ import {
   MouseRegion, parseColor, truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component, type TUI, type TuiMouseEvent, type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
+import { readSharedDiskUsage } from "./cache.ts";
 import { cleanupAdvice, supportsTmpfilesDryRun } from "./cleanup.ts";
 import { t } from "./i18n.ts";
+import { containerUsageLevel } from "./container.ts";
 import { scanHomes, type HomesReport } from "./homes.ts";
 import {
-  formatBytes, isInside, readDiskUsage, safeText, scanTmp, usageLevel, usagePercent,
+  formatBytes, isInside, safeText, scanTmp, usageLevel, usagePercent,
   type DirectoryReport, type DiskUsage,
 } from "./disk.ts";
 
@@ -19,8 +21,12 @@ const COLORS = {
 };
 export interface IndicatorState { usage?: DiskUsage; error?: string; }
 export function coloredUsage(theme: Theme, usage: DiskUsage): string {
-  return theme.style(`${usage.scope === "container" ? t("Контейнер /: занято", "Container /: used") : t("Диск: занято", "Disk: used")} ${usagePercent(usage.used, usage.total).toFixed(1)}% · ${formatBytes(usage.used)} / ${formatBytes(usage.total)}`, {
-    fg: COLORS[usageLevel(usage.used, usage.total)], bold: true,
+  const container = usage.scope === "container";
+  const text = container
+    ? `${t("Контейнер /: занято", "Container /: used")} ${formatBytes(usage.used)}${usage.incomplete ? t(" (неполные данные)", " (partial scan)") : ""}`
+    : `${t("Диск: занято", "Disk: used")} ${usagePercent(usage.used, usage.total).toFixed(1)}% · ${formatBytes(usage.used)} / ${formatBytes(usage.total)}`;
+  return theme.style(text + (usage.stale ? t(" (предыдущее измерение)", " (previous measurement)") : ""), {
+    fg: COLORS[container ? containerUsageLevel(usage.used, usage.containerThresholds) : usageLevel(usage.used, usage.total)], bold: true,
   });
 }
 
@@ -105,7 +111,12 @@ export class DiskReport implements Component {
       }
     };
     void load(supportsTmpfilesDryRun(controller.signal), (supported) => { this.tmpfilesDryRun = supported; }, () => {});
-    void load(readDiskUsage(controller.signal), (usage) => {
+    void load(readSharedDiskUsage(controller.signal, (previous) => {
+      if (!active()) return;
+      this.usage = previous;
+      this.publish(previous);
+      this.tui.requestRender();
+    }), (usage) => {
       this.usage = usage;
       this.publish(usage);
     }, (error) => { this.diskError = error; });
@@ -122,11 +133,10 @@ export class DiskReport implements Component {
     const add = (text: string) => lines.push(...wrapTextWithAnsi(text, Math.max(1, width)));
     if (this.usage) {
       add(coloredUsage(th, this.usage));
-      add(`${t("Всего", "Total")}: ${formatBytes(this.usage.total)} · ${t("доступно", "available")}: ${formatBytes(this.usage.available)}`);
+      if (this.usage.scope !== "container") add(`${t("Всего", "Total")}: ${formatBytes(this.usage.total)} · ${t("доступно", "available")}: ${formatBytes(this.usage.available)}`);
     }
     if (this.usage?.scope === "container") {
-      add(th.fg("warning", t("Контейнер: счётчик относится к файловой системе /. Для overlay это обычно хранилище хоста, не размер контейнера или его записываемого слоя. Лимит учитывается, только если он виден через statfs.", "Container: the indicator refers to the / filesystem. For overlay this is usually host storage, not the container size or its writable layer. A quota is reflected only if exposed by statfs.")));
-      add(th.fg("dim", t("Тома показаны отдельно и не прибавляются к /. Они могут использовать тот же диск хоста. Образы, слои и volumes других контейнеров изнутри не измеряются.", "Volumes are listed separately and are not added to /. They may share the same host disk. Images, layers and other containers' volumes cannot be measured from here.")));
+      add(th.fg("dim", t("du: занятые блоки видимых файлов /, включая тома и /tmp; исключены /proc, /sys, /dev и /run. Это не размер записываемого слоя Docker. Недоступные файлы не учитываются.", "du: allocated blocks of visible files under /, including volumes and /tmp; excludes /proc, /sys, /dev and /run. This is not the Docker writable-layer size. Inaccessible files are not counted.")));
     }
     if (this.diskError) add(th.fg("warning", `${t("Статистика диска", "Disk statistics")}: ${safeText(this.diskError)} (${t("предыдущее значение, если есть", "previous value, if available")})`));
     if (!this.usage && !this.diskError) add(t("Получение статистики файловых систем…", "Loading filesystem statistics…"));
@@ -158,8 +168,8 @@ export class DiskReport implements Component {
     add(th.fg("dim", t("Включая скрытые каталоги и вложенные пути. Символические ссылки не раскрываются.", "Includes hidden directories and nested paths. Symbolic links are not followed.")));
     add(th.fg("dim", t("Размер папки включает её содержимое: строки рейтинга нельзя складывать.", "Directory sizes include their contents: do not add the ranking rows together.")));
     lines.push("");
-    add(th.fg("accent", this.usage?.scope === "container" ? t("Файловая система / и отдельные тома (не суммируются)", "/ filesystem and separate volumes (not summed)") : t("Файловые системы (не только домашний каталог)", "Filesystems (not just the home directory)")));
-    for (const fs of this.usage?.filesystems ?? []) {
+    if (this.usage?.scope !== "container") add(th.fg("accent", t("Файловые системы (не только домашний каталог)", "Filesystems (not just the home directory)")));
+    for (const fs of this.usage?.scope === "container" ? [] : this.usage?.filesystems ?? []) {
       add(`${usagePercent(fs.used, fs.total).toFixed(1)}%  ${formatBytes(fs.used)} / ${formatBytes(fs.total)}  ${safeText(fs.mount)} [${safeText(fs.type)}]`);
     }
     add(th.fg("dim", t("GB = 1 000 000 000 байт. du: занятые блоки; df: вся файловая система.", "GB = 1,000,000,000 bytes. du: allocated blocks; df: the entire filesystem.")));

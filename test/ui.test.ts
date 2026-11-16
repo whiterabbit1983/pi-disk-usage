@@ -6,7 +6,7 @@ import { cleanupAdvice, supportsTmpfilesDryRun } from "../src/cleanup.ts";
 import { GB, type DiskUsage } from "../src/disk.ts";
 import { detectLanguage } from "../src/i18n.ts";
 import type { HomesReport } from "../src/homes.ts";
-import { createIndicator, DiskReport, type IndicatorState } from "../src/ui.ts";
+import { coloredUsage, createIndicator, DiskReport, type IndicatorState } from "../src/ui.ts";
 
 const theme = {
   fg: (_token: string, text: string) => text,
@@ -45,6 +45,26 @@ test("indicator supports clicks only on its label and uses exact requested color
   state = { error: "df failed" };
   assert.match(indicator.render(100)[0], detectLanguage() === "ru" ? /ошибка/ : /refresh failed/);
   for (const width of [0, 1, 4, 20, 40]) assert.ok(visibleWidth(indicator.render(width)[0]) <= width);
+});
+
+test("container indicator and report show only used bytes with absolute thresholds", () => {
+  const container: DiskUsage = { ...usage, scope: "container", used: 50 * GB, incomplete: true };
+  const label = coloredUsage(theme, container);
+  assert.match(label, /50\.0 GB/);
+  assert.match(label, /\x1b\[38;2;250;204;21m/);
+  assert.doesNotMatch(label, /%|250\.0|140\.0/);
+  assert.match(label, detectLanguage() === "ru" ? /неполные данные/ : /partial scan/);
+  assert.match(coloredUsage(theme, { ...container, containerThresholds: [10, 20, 30] }), /\x1b\[38;2;239;68;68m/);
+  const tui = { terminal: { rows: 80 }, requestRender() {} } as unknown as TUI;
+  const keys = new KeybindingsManager(TUI_KEYBINDINGS) as AgentKeys;
+  const report = new DiskReport(tui, theme, keys, () => {}, "/home/test", container, () => {});
+  const pages: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    pages.push(report.render(160).join("\n"));
+    report.handleMouse(mouse({ type: "wheel", wheelDelta: 10 }));
+  }
+  assert.doesNotMatch(pages.join("\n"), /%|250\.0 GB|140\.0 GB|statfs|доступно:|available:/);
+  report.dispose();
 });
 
 test("report fits narrow/wide/short terminals, supports scrolling, cleanup jump, close", () => {

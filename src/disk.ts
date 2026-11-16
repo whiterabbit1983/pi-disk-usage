@@ -19,8 +19,13 @@ export interface FilesystemUsage {
   available: number;
 }
 export interface DiskUsage {
-  /** Container totals refer only to /; additional volumes are not added. */
+  /** Container usage is a du scan of visible files; total/available are unavailable (0). */
   scope?: "container";
+  incomplete?: boolean;
+  /** Shared counter metadata only; directory rankings are not cached. */
+  measuredAt?: number;
+  stale?: boolean;
+  containerThresholds?: readonly [number, number, number];
   filesystems: FilesystemUsage[];
   used: number;
   total: number;
@@ -153,7 +158,7 @@ export class DuCollector {
   }
 }
 
-async function runDu(root: string, summary: boolean, signal: AbortSignal, timeoutMs: number): Promise<DirectoryReport> {
+async function runDu(root: string, summary: boolean, signal: AbortSignal, timeoutMs: number, excludes: string[] = []): Promise<DirectoryReport> {
   signal.throwIfAborted();
   const collector = new DuCollector(root, summary ? 0 : TOP_COUNT);
   const controller = new AbortController();
@@ -162,7 +167,8 @@ async function runDu(root: string, summary: boolean, signal: AbortSignal, timeou
   const deadline = setTimeout(abort, timeoutMs);
   deadline.unref();
   const args = ["--block-size=1", "--null", "--no-dereference",
-    ...(summary ? ["--summarize"] : ["--all", "--exclude=/tmp", "--exclude=/tmp/*"]), "--", root];
+    ...(summary ? ["--summarize"] : ["--all", "--exclude=/tmp", "--exclude=/tmp/*"]),
+    ...excludes.map((path) => `--exclude=${path}`), "--", root];
   const child = spawn("du", args, { env: { ...process.env, LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"] });
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const terminate = () => {
@@ -173,13 +179,30 @@ async function runDu(root: string, summary: boolean, signal: AbortSignal, timeou
   controller.signal.addEventListener("abort", terminate, { once: true });
   const decoder = new StringDecoder("utf8");
   let stderr = "";
+  let stderrLine = "";
+  let oversizedStderrLine = false;
+  let ignoredWarning = false;
+  const stderrDecoder = new StringDecoder("utf8");
+  const acceptStderrLine = () => {
+    if (/permission denied|access denied|operation not permitted/i.test(stderrLine)) ignoredWarning = true;
+    else if (!oversizedStderrLine && stderr.length < 4_096) stderr += (stderrLine + "\n").slice(0, 4_096 - stderr.length);
+    stderrLine = "";
+    oversizedStderrLine = false;
+  };
+  const consumeStderr = (text: string) => {
+    for (const fragment of text.split(/(?<=\n)/)) {
+      if (stderrLine.length + fragment.length > 16_384) oversizedStderrLine = true;
+      if (!oversizedStderrLine) stderrLine += fragment;
+      if (fragment.endsWith("\n")) acceptStderrLine();
+    }
+  };
   let streamError: unknown;
   child.stdout.on("data", (data: Buffer) => {
     try { collector.push(decoder.write(data)); }
     catch (error) { streamError = error; controller.abort(); }
   });
   child.stderr.on("data", (data: Buffer) => {
-    if (stderr.length < 4_096) stderr += data.toString("utf8").slice(0, 4_096 - stderr.length);
+    consumeStderr(stderrDecoder.write(data));
   });
   try {
     const code = await new Promise<number | null>((resolveCode, reject) => {
@@ -190,7 +213,9 @@ async function runDu(root: string, summary: boolean, signal: AbortSignal, timeou
     signal.throwIfAborted();
     if (controller.signal.aborted) throw new Error(t(`Сканирование заняло более ${timeoutMs / 1000} с`, `Scan exceeded ${timeoutMs / 1000} seconds`));
     collector.push(decoder.end());
-    if (code !== 0 && collector.total === undefined && !collector.entries.length) {
+    consumeStderr(stderrDecoder.end());
+    if (stderrLine || oversizedStderrLine) acceptStderrLine();
+    if (code !== 0 && collector.total === undefined && !collector.entries.length && !(ignoredWarning && !stderr.trim())) {
       if (/(?:unrecognized|invalid|unknown|illegal) option/i.test(stderr)) {
         throw new Error(t("Для сканирования нужен GNU du (coreutils). Debian/Ubuntu: apt-get install coreutils; Alpine: apk add coreutils.", "Scanning requires GNU du (coreutils). Debian/Ubuntu: apt-get install coreutils; Alpine: apk add coreutils."));
       }
@@ -219,6 +244,10 @@ export async function scanHome(home: string, signal: AbortSignal, timeoutMs = 12
   const root = await realpath(home);
   if (root === "/tmp" || isInside("/tmp", root)) throw new Error(t("Содержимое /tmp не показывается", "The contents of /tmp are not displayed"));
   return runDu(root, false, signal, timeoutMs);
+}
+
+export async function scanContainerRoot(signal: AbortSignal, timeoutMs = 120_000): Promise<DirectoryReport> {
+  return runDu("/", true, signal, timeoutMs, ["/proc", "/sys", "/dev", "/run"]);
 }
 
 export async function scanTmp(signal: AbortSignal, timeoutMs = 120_000): Promise<DirectoryReport> {

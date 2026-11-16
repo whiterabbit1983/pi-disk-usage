@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stat, statfs } from "node:fs/promises";
-import { containerHint, containerMounts, filesystemBytes, parseMountInfo, readContainerUsage } from "../src/container.ts";
+import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { GB } from "../src/disk.ts";
+import { containerHint, containerMounts, filesystemBytes, parseMountInfo, readContainerUsage, containerThresholds, containerUsageLevel } from "../src/container.ts";
 import { cleanupAdvice } from "../src/cleanup.ts";
 
 const mountinfo = String.raw`21 1 0:50 / / rw - overlay overlay rw,lowerdir=/host/private/layers
@@ -49,25 +52,42 @@ test("container hints cover Docker cgroup v1/v2, Kubernetes and rootless Podman 
   assert.equal(containerHint("", { container: "docker" }), true);
 });
 
-test("container capacity uses only /, lists unique directory filesystems and honors cancellation", async () => {
-  const usage = await readContainerUsage();
-  const root = usage.filesystems.find(({ mount }) => mount === "/")!;
-  const stats = filesystemBytes(await statfs("/"));
-  assert.equal(usage.scope, "container");
-  assert.equal(usage.total, stats.total);
-  assert.equal(usage.total, root.total);
-  assert.equal(usage.used, root.used);
-  assert.equal(usage.available, root.available);
-  const devices: number[] = [];
-  for (const filesystem of usage.filesystems) {
-    const metadata = await stat(filesystem.mount);
-    assert.ok(metadata.isDirectory());
-    devices.push(metadata.dev);
+test("container thresholds use exact GB boundaries and validate custom values", () => {
+  assert.deepEqual(containerThresholds({}), [50, 60, 70]);
+  for (const [gb, level] of [[0, "green"], [49.999, "green"], [50, "yellow"], [59.999, "yellow"], [60, "orange"], [69.999, "orange"], [70, "red"], [100, "red"]] as const) {
+    assert.equal(containerUsageLevel(gb * GB), level);
   }
-  assert.equal(devices.length, new Set(devices).size);
-  const controller = new AbortController();
-  controller.abort();
-  await assert.rejects(readContainerUsage(controller.signal), { name: "AbortError" });
+  const custom = containerThresholds({ PI_DISK_USAGE_CONTAINER_THRESHOLDS_GB: " 1.5, 2, 3 " });
+  assert.equal(containerUsageLevel(1.5 * GB, custom), "yellow");
+  assert.equal(containerUsageLevel(3 * GB, custom), "red");
+  for (const raw of ["", "1,2", "1,2,3,4", "1,,3", "-1,2,3", "1,1,3", "3,2,1", "NaN,2,3", "1,2,Infinity"]) {
+    assert.throws(() => containerThresholds({ PI_DISK_USAGE_CONTAINER_THRESHOLDS_GB: raw }), /PI_DISK_USAGE_CONTAINER_THRESHOLDS_GB/);
+  }
+});
+
+test("container usage scans visible root with exclusions, preserves partial status and honors cancellation", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "container-du-"));
+  const path = process.env.PATH;
+  try {
+    await writeFile(join(dir, "du"), '#!/bin/sh\nprintf "%s\\n" "$@" > "' + join(dir, "args") + '"\nprintf "55000000000\\t/\\000"\nexit 1\n', { mode: 0o755 });
+    process.env.PATH = dir;
+    const usage = await readContainerUsage();
+    assert.equal(usage.scope, "container");
+    assert.equal(usage.used, 55 * GB);
+    assert.equal(usage.total, 0);
+    assert.equal(usage.available, 0);
+    assert.deepEqual(usage.filesystems, []);
+    assert.equal(usage.incomplete, true);
+    const args = await readFile(join(dir, "args"), "utf8");
+    for (const option of ["--block-size=1", "--null", "--summarize", "--exclude=/proc", "--exclude=/sys", "--exclude=/dev", "--exclude=/run"]) assert.ok(args.includes(option));
+    assert.ok(args.endsWith("--\n/\n"));
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(readContainerUsage(controller.signal), { name: "AbortError" });
+  } finally {
+    if (path === undefined) delete process.env.PATH; else process.env.PATH = path;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("container advice assumes neither systemd nor sudo and does not suggest Docker/Podman cleanup through a socket", () => {

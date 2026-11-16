@@ -162,6 +162,17 @@ test("du partial errors, summary arguments, timeout and in-flight cancellation",
     await assert.rejects(operation, { name: "AbortError" });
 
     await fakeDu(`process.stderr.write('Access denied'); process.exitCode = 1;`);
-    await assert.rejects(scanHome(fixture, new AbortController().signal), /Access denied/);
+    const denied = await scanHome(fixture, new AbortController().signal);
+    assert.equal(denied.total, undefined);
+    assert.deepEqual(denied.entries, []);
+    assert.equal(denied.incomplete, true);
+    assert.doesNotMatch(JSON.stringify(denied), /Access denied/);
+
+    await fakeDu(`process.stderr.write("du: /private: Permission denied\\n"); process.stderr.write("du: input/output error\\n"); process.exitCode = 1;`);
+    await assert.rejects(scanHome(fixture, new AbortController().signal), (error: Error) => {
+      assert.match(error.message, /input\/output error/);
+      assert.doesNotMatch(error.message, /Permission denied|private/);
+      return true;
+    });
   } finally { process.env.PATH = originalPath; }
 });

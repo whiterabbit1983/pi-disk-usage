@@ -48,6 +48,10 @@ export async function scanHomes(home: string, signal: AbortSignal, timeoutMs = 1
     if (remaining <= 0) throw new Error(t("Истекло время сканирования домашних каталогов", "Home-directory scan timed out"));
     try {
       const report = await scanHome(root, signal, remaining);
+      if (report.incomplete && report.total === undefined && !report.entries.length) {
+        incomplete = true;
+        continue;
+      }
       directories.push(report);
       if (report.total !== undefined) { total += report.total; hasTotal = true; }
       incomplete ||= report.incomplete;

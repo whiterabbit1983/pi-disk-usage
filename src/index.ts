@@ -1,11 +1,13 @@
 import { homedir } from "node:os";
 import { t } from "./i18n.ts";
+import { isContainer } from "./container.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readDiskUsage, type DiskUsage } from "./disk.ts";
+import type { DiskUsage } from "./disk.ts";
+import { readSharedDiskUsage, HOST_REFRESH_MS, CONTAINER_REFRESH_MS } from "./cache.ts";
+export { HOST_REFRESH_MS, CONTAINER_REFRESH_MS } from "./cache.ts";
 import { createIndicator, DiskReport, type IndicatorState } from "./ui.ts";
 
 const WIDGET_KEY = "pi-disk-usage";
-const REFRESH_MS = 30_000;
 
 export default function diskUsageExtension(pi: ExtensionAPI): void {
   let state: IndicatorState = {};
@@ -26,7 +28,9 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
     refreshing = true;
     const current = lifetime;
     try {
-      const usage = await readDiskUsage(current.signal);
+      const usage = await readSharedDiskUsage(current.signal, (previous) => {
+        if (lifetime === current && !current.signal.aborted) publish(previous);
+      });
       if (lifetime === current && !current.signal.aborted) publish(usage);
     } catch (error) {
       if (lifetime === current && !current.signal.aborted) {
@@ -67,15 +71,18 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => open(ctx),
   });
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     lifetime = new AbortController();
     ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
       requestRender = () => tui.requestRender();
       return createIndicator(theme, () => state, () => { void open(ctx); });
     }, { placement: "belowEditor" });
+    const current = lifetime;
+    const container = await isContainer();
+    if (lifetime !== current || current.signal.aborted) return;
     void refresh();
-    timer = setInterval(() => { void refresh(); }, REFRESH_MS);
+    timer = setInterval(() => { void refresh(); }, container ? CONTAINER_REFRESH_MS : HOST_REFRESH_MS);
     timer.unref();
   });
 
