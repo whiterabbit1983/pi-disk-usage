@@ -47,6 +47,18 @@ test("indicator supports clicks only on its label and uses exact requested color
   for (const width of [0, 1, 4, 20, 40]) assert.ok(visibleWidth(indicator.render(width)[0]) <= width);
 });
 
+test("usage icons reflect host and container severity levels", () => {
+  for (const [hostGB, containerGB, icon] of [[40, 40, "✅"], [75, 50, "👀"], [85, 60, "⚠️"], [95, 70, "🚨"]] as const) {
+    for (const value of [
+      { ...usage, used: hostGB * GB, total: 100 * GB },
+      { ...usage, scope: "container" as const, used: containerGB * GB },
+    ]) {
+      const label = coloredUsage(theme, value).replace(/\x1b\[[0-9;]*m/g, "");
+      assert.ok(label.startsWith(`${icon} `), label);
+    }
+  }
+});
+
 test("container indicator and report show only used bytes with absolute thresholds", () => {
   const container: DiskUsage = { ...usage, scope: "container", used: 50 * GB, incomplete: true };
   const label = coloredUsage(theme, container);

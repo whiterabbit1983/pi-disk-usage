@@ -19,14 +19,16 @@ const COLORS = {
   orange: parseColor("#ff9800"),
   red: parseColor("#ef4444"),
 };
+const USAGE_ICONS = { green: "✅", yellow: "👀", orange: "⚠️", red: "🚨" };
 export interface IndicatorState { usage?: DiskUsage; error?: string; }
 export function coloredUsage(theme: Theme, usage: DiskUsage): string {
   const container = usage.scope === "container";
+  const level = container ? containerUsageLevel(usage.used, usage.containerThresholds) : usageLevel(usage.used, usage.total);
   const text = container
     ? `${t("Контейнер /: занято", "Container /: used")} ${formatBytes(usage.used)}${usage.incomplete ? t(" (неполные данные)", " (partial scan)") : ""}`
     : `${t("Диск: занято", "Disk: used")} ${usagePercent(usage.used, usage.total).toFixed(1)}% · ${formatBytes(usage.used)} / ${formatBytes(usage.total)}`;
-  return theme.style(text + (usage.stale ? t(" (предыдущее измерение)", " (previous measurement)") : ""), {
-    fg: COLORS[container ? containerUsageLevel(usage.used, usage.containerThresholds) : usageLevel(usage.used, usage.total)], bold: true,
+  return theme.style(`${USAGE_ICONS[level]} ${text}` + (usage.stale ? t(" (предыдущее измерение)", " (previous measurement)") : ""), {
+    fg: COLORS[level], bold: true,
   });
 }
 
