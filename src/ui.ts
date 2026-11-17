@@ -20,7 +20,7 @@ const COLORS = {
   red: parseColor("#ef4444"),
 };
 const USAGE_ICONS = { green: "✅", yellow: "👀", orange: "⚠️", red: "🚨" };
-export interface IndicatorState { usage?: DiskUsage; error?: string; }
+export interface IndicatorState { usage?: DiskUsage; }
 export function coloredUsage(theme: Theme, usage: DiskUsage): string {
   const container = usage.scope === "container";
   const level = container ? containerUsageLevel(usage.used, usage.containerThresholds) : usageLevel(usage.used, usage.total);
@@ -37,9 +37,7 @@ export function createIndicator(theme: Theme, state: () => IndicatorState, open:
   return new MouseRegion({
     render(width) {
       const current = state();
-      const text = current.error
-        ? theme.fg("warning", t("Диск: ошибка обновления", "Disk: refresh failed"))
-        : current.usage ? coloredUsage(theme, current.usage) : theme.fg("dim", t("Диск: измерение…", "Disk: measuring…"));
+      const text = current.usage ? coloredUsage(theme, current.usage) : theme.fg("dim", t("Диск: --", "Disk: --"));
       clickableWidth = Math.min(width, visibleWidth(text));
       const hint = theme.fg("dim", t("  [клик / /disk]", "  [click / /disk]"));
       return [truncateToWidth(text + hint, width)];
@@ -147,7 +145,11 @@ export class DiskReport implements Component {
     if (this.tmp) {
       add(`/tmp: ${this.tmp.total === undefined ? "?" : formatBytes(this.tmp.total)} (${this.usage?.scope === "container" ? t("может находиться на отдельном томе или tmpfs", "may reside on a separate volume or tmpfs") : t("уже входит в счётчик диска", "already included in disk usage")})`);
     } else add(this.tmpError ? th.fg("warning", safeText(this.tmpError)) : t("Подсчёт /tmp… содержимое не выводится.", "Measuring /tmp… contents are not displayed."));
-    add(th.fg("dim", t("Автоочистки нет. Нажмите c: команды и ограничения очистки /tmp и специализированных каталогов.", "No automatic cleanup. Press c for cleanup commands and caveats for /tmp and recognized directories.")));
+    const tmpAdvice = cleanupAdvice(this.homePath, [], this.tmpfilesDryRun, this.usage?.scope === "container")[0];
+    add(th.fg("dim", t("Автоочистки нет. Команды выполняются только вручную после проверки.", "No automatic cleanup. Run commands manually only after inspection.")));
+    for (const command of tmpAdvice.inspect) add(`${t("Проверка", "Inspect")}: ${command}`);
+    for (const command of tmpAdvice.clean) add(`${t("После проверки", "After inspection")}: ${command}`);
+    add(th.fg("dim", tmpAdvice.caution));
     lines.push("");
     add(th.fg("accent", t("Топ-20 файлов и папок отдельно по домашним каталогам", "Top 20 files and directories per home directory")));
     if (this.home) {

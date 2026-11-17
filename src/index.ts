@@ -32,11 +32,9 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
         if (lifetime === current && !current.signal.aborted) publish(previous);
       });
       if (lifetime === current && !current.signal.aborted) publish(usage);
-    } catch (error) {
-      if (lifetime === current && !current.signal.aborted) {
-        state = { ...state, error: error instanceof Error ? error.message : String(error) };
-        requestRender?.();
-      }
+    } catch {
+      // Keep the last successful measurement (or the initial -- placeholder).
+      // Measurement diagnostics belong in the report, not the status indicator.
     } finally { refreshing = false; }
   };
 

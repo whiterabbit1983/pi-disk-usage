@@ -49,11 +49,11 @@ for (const locale of ["ru_RU.UTF-8", "en_US.UTF-8", "C", "fr_FR.UTF-8"]) {
     assert.equal(t("русский", "English"), russian ? "русский" : "English");
     let state: IndicatorState = {};
     const indicator = createIndicator(theme, () => state, () => {});
-    assert.match(indicator.render(120).join("\n"), russian ? /Диск: измерение.*клик/ : /Disk: measuring.*click/);
+    assert.match(indicator.render(120).join("\n"), russian ? /Диск: --.*клик/ : /Disk: --.*click/);
     state = { usage };
     assert.match(indicator.render(120).join("\n"), russian ? /Диск: занято 10\.0%/ : /Disk: used 10\.0%/);
-    state = { error: "failure" };
-    assert.match(indicator.render(120).join("\n"), russian ? /Диск: ошибка обновления/ : /Disk: refresh failed/);
+    state = {};
+    assert.match(indicator.render(120).join("\n"), russian ? /Диск: --/ : /Disk: --/);
 
     const tui = { terminal: { rows: 40 }, requestRender() {} } as unknown as TUI;
     const keys = new KeybindingsManager(TUI_KEYBINDINGS) as AgentKeys;

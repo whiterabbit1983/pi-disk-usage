@@ -42,9 +42,32 @@ test("indicator supports clicks only on its label and uses exact requested color
   state = { usage: { ...usage, used: 70 * GB, total: 100 * GB } };
   assert.match(indicator.render(100)[0], /\x1b\[38;2;34;197;94m/);
   assert.match(indicator.render(100)[0], /70\.0%/);
-  state = { error: "df failed" };
-  assert.match(indicator.render(100)[0], detectLanguage() === "ru" ? /ошибка/ : /refresh failed/);
+  state = {};
+  assert.match(indicator.render(100)[0], /--/);
   for (const width of [0, 1, 4, 20, 40]) assert.ok(visibleWidth(indicator.render(width)[0]) <= width);
+});
+
+test("indicator uses -- until a measurement is available", () => {
+  let state: IndicatorState = {};
+  const indicator = createIndicator(theme, () => state, () => {});
+  assert.match(indicator.render(120)[0], /--/);
+  state = { usage };
+  assert.match(indicator.render(120)[0], /40\.0%/);
+});
+
+test("tmp cleanup commands and safety caveats are visible without pressing c", () => {
+  const tui = { terminal: { rows: 80 }, requestRender() {} } as unknown as TUI;
+  const keys = new KeybindingsManager(TUI_KEYBINDINGS) as AgentKeys;
+  for (const dryRun of [false, true]) {
+    const report = new DiskReport(tui, theme, keys, () => {}, "/home/test", usage, () => {});
+    Object.assign(report, { tmpfilesDryRun: dryRun });
+    const page = report.render(160).join("\n");
+    assert.match(page, /sudo systemd-tmpfiles --clean --prefix=\/tmp/);
+    assert.match(page, dryRun ? /--dry-run/ : /systemd-tmpfiles --cat-config/);
+    assert.match(page, detectLanguage() === "ru" ? /исключения из системных правил/ : /exclusions in system rules/);
+    assert.doesNotMatch(page, /Нажмите c|Press c/);
+    report.dispose();
+  }
 });
 
 test("usage icons reflect host and container severity levels", () => {
