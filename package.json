@@ -4,20 +4,34 @@
   "description": "Clickable disk usage indicator and home directory top 20 for Pi",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package"],
-  "engines": { "node": ">=22.18.0" },
-  "files": ["src", "README.md", "LICENSE"],
-  "pi": { "extensions": ["./src/index.ts"] },
+  "keywords": [
+    "pi-package"
+  ],
+  "engines": {
+    "node": ">=26.13.1"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
   "scripts": {
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fmt": "prettier --print-width 120 --write --tab-width 4 --no-semi \"**/*.{ts,tsx}\""
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.5.2",
     "@earendil-works/pi-tui": ">=1.5.2"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.9.0"
+    "@types/node": "^26.6.6",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2"
   }
 }
