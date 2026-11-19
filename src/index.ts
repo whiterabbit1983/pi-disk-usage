@@ -107,13 +107,7 @@ export default function diskUsageExtension(pi: ExtensionAPI): void {
         const current = lifetime
         const container = await isContainer()
         if (lifetime !== current || current.signal.aborted) return
-        void refresh()
-        timer = setInterval(
-            () => {
-                void refresh()
-            },
-            container ? CONTAINER_REFRESH_MS : HOST_REFRESH_MS,
-        )
+        timer = setInterval(refresh, container ? CONTAINER_REFRESH_MS : HOST_REFRESH_MS)
         timer.unref()
     })
 
